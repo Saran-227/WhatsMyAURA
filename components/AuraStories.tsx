@@ -1,8 +1,19 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
+import {
+  collection,
+  addDoc,
+  getDocs,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+  doc,
+  increment,
+} from "firebase/firestore"
+import { db } from "@/lib/firebase"
 import type { User, AuraStory } from "@/app/page"
 
 interface AuraStoriesProps {
@@ -16,91 +27,145 @@ export default function AuraStories({ user, setUser }: AuraStoriesProps) {
   const [selectedStory, setSelectedStory] = useState<AuraStory | null>(null)
   const [storyText, setStoryText] = useState("")
   const [storyImage, setStoryImage] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
 
-  // Sample stories for demo
-  const sampleStories: AuraStory[] = [
-    {
-      id: 1001,
-      userId: 1001,
-      username: "Aarav Sharma",
-      profilePic: "https://api.dicebear.com/7.x/avataaars/svg?seed=AaravSharma",
-      image: "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=400&h=600&fit=crop",
-      text: "Just hit a century! 💯 The grind never stops! #Cricket #AURA",
-      timestamp: new Date(Date.now() - 3600000).toISOString(),
-      views: 234,
-      likes: 45,
-    },
-    {
-      id: 1002,
-      userId: 1002,
-      username: "Diya Patel",
-      profilePic: "https://api.dicebear.com/7.x/avataaars/svg?seed=DiyaPatel",
-      image: "https://images.unsplash.com/photo-1494790108755-2616c9c0e8e0?w=400&h=600&fit=crop",
-      text: "New project announcement coming soon! ✨ #Bollywood #Excited",
-      timestamp: new Date(Date.now() - 7200000).toISOString(),
-      views: 567,
-      likes: 89,
-    },
-    {
-      id: 1003,
-      userId: 1003,
-      username: "Arjun Singh",
-      profilePic: "https://api.dicebear.com/7.x/avataaars/svg?seed=ArjunSingh",
-      image: "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=600&fit=crop",
-      text: "Mountain vibes! 🏔️ Nature is the best therapy #Travel #AURA",
-      timestamp: new Date(Date.now() - 10800000).toISOString(),
-      views: 123,
-      likes: 34,
-    },
-  ]
-
+  // Load all stories from Firebase
   useEffect(() => {
-    // Load user stories and sample stories
-    const savedStories = localStorage.getItem("auraStories")
-    let userStories: AuraStory[] = []
+    loadStories()
+  }, [])
 
-    if (savedStories) {
-      userStories = JSON.parse(savedStories)
+  const loadStories = async () => {
+    try {
+      setLoading(true)
+      const storiesRef = collection(db, "stories")
+      const q = query(storiesRef, orderBy("timestamp", "desc"))
+      const querySnapshot = await getDocs(q)
+
+      const loadedStories: AuraStory[] = []
+      querySnapshot.forEach((doc) => {
+        const data = doc.data()
+        // Filter stories from last 24 hours
+        const storyTime = data.timestamp?.toDate?.() || new Date(data.timestamp)
+        const isRecent = Date.now() - storyTime.getTime() < 24 * 60 * 60 * 1000
+
+        if (isRecent) {
+          loadedStories.push({
+            id: doc.id,
+            userId: data.userId,
+            username: data.username,
+            profilePic: data.profilePic,
+            image: data.image,
+            text: data.text,
+            timestamp: storyTime.toISOString(),
+            views: data.views || 0,
+            likes: data.likes || 0,
+          })
+        }
+      })
+
+      setStories(loadedStories)
+      console.log(`Loaded ${loadedStories.length} recent stories from Firebase`)
+    } catch (error) {
+      console.error("Error loading stories:", error)
+      // Fallback to sample stories if Firebase fails
+      loadSampleStories()
+    } finally {
+      setLoading(false)
     }
+  }
 
-    // Combine and filter stories from last 24 hours
-    const allStories = [...sampleStories, ...userStories]
-    const recentStories = allStories.filter(
-      (story) => Date.now() - new Date(story.timestamp).getTime() < 24 * 60 * 60 * 1000,
-    )
+  const loadSampleStories = () => {
+    const sampleStories: AuraStory[] = [
+      {
+        id: 1001,
+        userId: 1001,
+        username: "Aarav Sharma",
+        profilePic: "https://api.dicebear.com/7.x/avataaars/svg?seed=AaravSharma",
+        image: "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=400&h=600&fit=crop",
+        text: "Just hit a century! 💯 The grind never stops! #Cricket #AURA",
+        timestamp: new Date(Date.now() - 3600000).toISOString(),
+        views: 234,
+        likes: 45,
+      },
+      {
+        id: 1002,
+        userId: 1002,
+        username: "Diya Patel",
+        profilePic: "https://api.dicebear.com/7.x/avataaars/svg?seed=DiyaPatel",
+        image: "https://images.unsplash.com/photo-1494790108755-2616c9c0e8e0?w=400&h=600&fit=crop",
+        text: "New project announcement coming soon! ✨ #Bollywood #Excited",
+        timestamp: new Date(Date.now() - 7200000).toISOString(),
+        views: 567,
+        likes: 89,
+      },
+      {
+        id: 1003,
+        userId: 1003,
+        username: "Arjun Singh",
+        profilePic: "https://api.dicebear.com/7.x/avataaars/svg?seed=ArjunSingh",
+        image: "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=600&fit=crop",
+        text: "Mountain vibes! 🏔️ Nature is the best therapy #Travel #AURA",
+        timestamp: new Date(Date.now() - 10800000).toISOString(),
+        views: 123,
+        likes: 34,
+      },
+    ]
+    setStories(sampleStories)
+  }
 
-    setStories(recentStories.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()))
-  }, [user])
+  const createStory = async () => {
+    if (!user || (!storyText.trim() && !storyImage) || creating) return
 
-  const createStory = () => {
-    if (!user || (!storyText.trim() && !storyImage)) return
+    try {
+      setCreating(true)
 
-    const newStory: AuraStory = {
-      id: Date.now(),
-      userId: user.id,
-      username: user.username,
-      profilePic: user.profilePic,
-      image: storyImage,
-      text: storyText.trim(),
-      timestamp: new Date().toISOString(),
-      views: 0,
-      likes: 0,
+      const storyData = {
+        userId: user.id,
+        username: user.username,
+        profilePic: user.profilePic,
+        image: storyImage,
+        text: storyText.trim(),
+        timestamp: serverTimestamp(),
+        views: 0,
+        likes: 0,
+      }
+
+      // Add story to Firebase
+      const docRef = await addDoc(collection(db, "stories"), storyData)
+      console.log("Story created with ID:", docRef.id)
+
+      // Create local story object for immediate UI update
+      const newStory: AuraStory = {
+        id: docRef.id,
+        userId: user.id,
+        username: user.username,
+        profilePic: user.profilePic,
+        image: storyImage,
+        text: storyText.trim(),
+        timestamp: new Date().toISOString(),
+        views: 0,
+        likes: 0,
+      }
+
+      // Add to local state for immediate feedback
+      setStories((prevStories) => [newStory, ...prevStories])
+
+      // Reset form
+      setStoryText("")
+      setStoryImage(null)
+      setShowCreateStory(false)
+
+      // Reload stories to get the latest from all users
+      setTimeout(() => {
+        loadStories()
+      }, 1000)
+    } catch (error) {
+      console.error("Error creating story:", error)
+      alert("Failed to create story. Please try again.")
+    } finally {
+      setCreating(false)
     }
-
-    // Add to local state
-    const updatedStories = [newStory, ...stories]
-    setStories(updatedStories)
-
-    // Save user stories
-    const savedStories = localStorage.getItem("auraStories")
-    const userStories = savedStories ? JSON.parse(savedStories) : []
-    userStories.unshift(newStory)
-    localStorage.setItem("auraStories", JSON.stringify(userStories))
-
-    // Reset form
-    setStoryText("")
-    setStoryImage(null)
-    setShowCreateStory(false)
   }
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -114,16 +179,38 @@ export default function AuraStories({ user, setUser }: AuraStoriesProps) {
     }
   }
 
-  const viewStory = (story: AuraStory) => {
+  const viewStory = async (story: AuraStory) => {
     setSelectedStory(story)
-    // Increment view count
-    const updatedStories = stories.map((s) => (s.id === story.id ? { ...s, views: s.views + 1 } : s))
-    setStories(updatedStories)
+
+    try {
+      // Increment view count in Firebase
+      const storyRef = doc(db, "stories", story.id.toString())
+      await updateDoc(storyRef, {
+        views: increment(1),
+      })
+
+      // Update local state
+      setStories((prevStories) => prevStories.map((s) => (s.id === story.id ? { ...s, views: s.views + 1 } : s)))
+    } catch (error) {
+      console.error("Error updating view count:", error)
+    }
   }
 
-  const likeStory = (storyId: number) => {
-    const updatedStories = stories.map((story) => (story.id === storyId ? { ...story, likes: story.likes + 1 } : story))
-    setStories(updatedStories)
+  const likeStory = async (storyId: number | string) => {
+    try {
+      // Update Firebase
+      const storyRef = doc(db, "stories", storyId.toString())
+      await updateDoc(storyRef, {
+        likes: increment(1),
+      })
+
+      // Update local state
+      setStories((prevStories) =>
+        prevStories.map((story) => (story.id === storyId ? { ...story, likes: story.likes + 1 } : story)),
+      )
+    } catch (error) {
+      console.error("Error updating like count:", error)
+    }
   }
 
   const formatTimeAgo = (timestamp: string) => {
@@ -143,7 +230,15 @@ export default function AuraStories({ user, setUser }: AuraStoriesProps) {
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold text-white mb-4 apple-font">AURA Stories</h1>
-          <p className="text-xl text-gray-400 font-medium">Share your moments and see what others are up to</p>
+          <p className="text-xl text-gray-400 font-medium">Share your moments with the world</p>
+          {loading && (
+            <div className="mt-4">
+              <div className="inline-flex items-center px-4 py-2 bg-gray-800 rounded-lg">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500 mr-2"></div>
+                <span className="text-gray-300">Loading global stories...</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Stories Row */}
@@ -193,7 +288,7 @@ export default function AuraStories({ user, setUser }: AuraStoriesProps) {
             <div className="glass-effect rounded-2xl w-full max-w-md">
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl font-bold text-white apple-font">Create AURA Story</h3>
+                  <h3 className="text-xl font-bold text-white apple-font">Share Your AURA Story</h3>
                   <button
                     onClick={() => setShowCreateStory(false)}
                     className="text-gray-400 hover:text-white transition-colors text-xl"
@@ -227,26 +322,33 @@ export default function AuraStories({ user, setUser }: AuraStoriesProps) {
                     <textarea
                       value={storyText}
                       onChange={(e) => setStoryText(e.target.value)}
-                      placeholder="Share your AURA moment..."
+                      placeholder="Share your AURA moment with the world..."
                       className="w-full bg-gray-800 border border-gray-600 rounded-lg p-3 text-white placeholder-gray-400 resize-none h-24 focus:outline-none focus:border-blue-500"
                       maxLength={150}
                     />
                     <div className="text-right text-sm text-gray-500 mt-1">{storyText.length}/150</div>
                   </div>
 
+                  <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-3">
+                    <p className="text-sm text-blue-300">
+                      🌍 Your story will be visible to everyone who visits this app!
+                    </p>
+                  </div>
+
                   <div className="flex space-x-3">
                     <button
                       onClick={() => setShowCreateStory(false)}
                       className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded-lg transition-colors"
+                      disabled={creating}
                     >
                       Cancel
                     </button>
                     <button
                       onClick={createStory}
-                      disabled={!storyText.trim() && !storyImage}
+                      disabled={(!storyText.trim() && !storyImage) || creating}
                       className="flex-1 premium-gradient text-white font-bold py-3 rounded-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Share Story
+                      {creating ? "Sharing..." : "Share Globally"}
                     </button>
                   </div>
                 </div>
@@ -320,9 +422,9 @@ export default function AuraStories({ user, setUser }: AuraStoriesProps) {
         {/* Recent Stories Grid */}
         {stories.length > 0 && (
           <div className="mt-12">
-            <h2 className="text-2xl font-bold text-white mb-6 apple-font">Recent Stories</h2>
+            <h2 className="text-2xl font-bold text-white mb-6 apple-font">Global Stories ({stories.length})</h2>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {stories.slice(0, 8).map((story) => (
+              {stories.slice(0, 12).map((story) => (
                 <button
                   key={story.id}
                   onClick={() => viewStory(story)}
@@ -351,11 +453,30 @@ export default function AuraStories({ user, setUser }: AuraStoriesProps) {
                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
                       <p className="text-white text-sm font-medium truncate">{story.username}</p>
                       <p className="text-gray-300 text-xs">{formatTimeAgo(story.timestamp)}</p>
+                      <div className="flex items-center space-x-2 mt-1">
+                        <span className="text-xs text-gray-300">👁️ {story.views}</span>
+                        <span className="text-xs text-gray-300">❤️ {story.likes}</span>
+                      </div>
                     </div>
                   </div>
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Empty State */}
+        {!loading && stories.length === 0 && (
+          <div className="text-center py-12">
+            <div className="text-6xl mb-4">📸</div>
+            <h3 className="text-xl font-bold text-white mb-2">No Stories Yet</h3>
+            <p className="text-gray-400 mb-6">Be the first to share your AURA story with the world!</p>
+            <button
+              onClick={() => setShowCreateStory(true)}
+              className="premium-gradient text-white font-bold py-3 px-6 rounded-lg hover-lift transition-all duration-300"
+            >
+              Create First Story
+            </button>
           </div>
         )}
       </div>
