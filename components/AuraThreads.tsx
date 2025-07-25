@@ -1,6 +1,19 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import {
+  collection,
+  addDoc,
+  getDocs,
+  query,
+  orderBy,
+  limit,
+  serverTimestamp,
+  doc,
+  updateDoc,
+  increment,
+} from "firebase/firestore"
+import { db } from "@/lib/firebase"
 import type { User, Thread } from "@/app/page"
 
 interface AuraThreadsProps {
@@ -13,9 +26,11 @@ export default function AuraThreads({ user, setUser, onOpenDM }: AuraThreadsProp
   const [threads, setThreads] = useState<Thread[]>([])
   const [newThread, setNewThread] = useState("")
   const [showNewThread, setShowNewThread] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [posting, setPosting] = useState(false)
 
-  // 10 Thug Life and Cool Stories with Indian names
-  const coolStories = [
+  // Sample threads for fallback
+  const sampleThreads = [
     {
       id: 8001,
       userId: 8001,
@@ -71,82 +86,81 @@ export default function AuraThreads({ user, setUser, onOpenDM }: AuraThreadsProp
       comments: 134,
       timestamp: new Date(Date.now() - 432000000).toISOString(),
     },
-    {
-      id: 8006,
-      userId: 8006,
-      username: "Pooja Singh",
-      profilePic: "https://api.dicebear.com/7.x/avataaars/svg?seed=PoojaSingh",
-      text: "Group project partner did zero work but wanted equal credit. Presented my part flawlessly, then said 'Now Pooja will present their contribution.' Watched them panic in 4K. 📹",
-      likes: 1156,
-      reactions: { fire: 689, heart: 345, mind: 122 },
-      comments: 189,
-      timestamp: new Date(Date.now() - 518400000).toISOString(),
-    },
-    {
-      id: 8007,
-      userId: 8007,
-      username: "Karan Malhotra",
-      profilePic: "https://api.dicebear.com/7.x/avataaars/svg?seed=KaranMalhotra",
-      text: "Neighbor kept parking in my spot. So I learned their schedule and moved their car to different legal spots every day for a month. They thought they were losing their mind. 🚗",
-      likes: 845,
-      reactions: { fire: 456, heart: 289, mind: 100 },
-      comments: 167,
-      timestamp: new Date(Date.now() - 604800000).toISOString(),
-    },
-    {
-      id: 8008,
-      userId: 8008,
-      username: "Sneha Kapoor",
-      profilePic: "https://api.dicebear.com/7.x/avataaars/svg?seed=SnehaKapoor",
-      text: "Boss tried to fire me for 'attitude problems.' I reminded him I had recordings of all his inappropriate comments. Suddenly my attitude wasn't a problem anymore. 📱🎙️",
-      likes: 1034,
-      reactions: { fire: 623, heart: 267, mind: 144 },
-      comments: 201,
-      timestamp: new Date(Date.now() - 691200000).toISOString(),
-    },
-    {
-      id: 8009,
-      userId: 8009,
-      username: "Vikram Rao",
-      profilePic: "https://api.dicebear.com/7.x/avataaars/svg?seed=VikramRao",
-      text: "Scammer called pretending to be from my bank. I played along for 30 minutes, then said 'This is actually CBI, you're under arrest.' Heard them throw their phone. 📞",
-      likes: 1289,
-      reactions: { fire: 734, heart: 345, mind: 210 },
-      comments: 234,
-      timestamp: new Date(Date.now() - 777600000).toISOString(),
-    },
-    {
-      id: 8010,
-      userId: 8010,
-      username: "Ishita Gupta",
-      profilePic: "https://api.dicebear.com/7.x/avataaars/svg?seed=IshitaGupta",
-      text: "Aunty demanded to speak to my manager at the store. I said 'Sure, one moment.' Walked to the back, put on a different shirt, came back out. 'Hi, I'm the manager. What seems to be the problem?' 👔",
-      likes: 1567,
-      reactions: { fire: 823, heart: 456, mind: 288 },
-      comments: 312,
-      timestamp: new Date(Date.now() - 864000000).toISOString(),
-    },
   ]
 
+  // Load global threads from Firebase
   useEffect(() => {
-    if (!user) return
+    const loadGlobalThreads = async () => {
+      if (!user) return
 
-    const savedThreads = localStorage.getItem("auraThreads")
-    let userThreads: Thread[] = []
+      try {
+        console.log("Loading global threads from Firebase...")
+        setLoading(true)
 
-    if (savedThreads) {
-      userThreads = JSON.parse(savedThreads)
+        const threadsRef = collection(db, "threads")
+        const q = query(threadsRef, orderBy("timestamp", "desc"), limit(50))
+        const querySnapshot = await getDocs(q)
+
+        const globalThreads: Thread[] = []
+        querySnapshot.forEach((doc) => {
+          const data = doc.data()
+          globalThreads.push({
+            id: doc.id,
+            userId: data.userId,
+            username: data.username,
+            profilePic: data.profilePic,
+            text: data.text,
+            likes: data.likes || 0,
+            reactions: data.reactions || { fire: 0, heart: 0, mind: 0 },
+            comments: data.comments || 0,
+            timestamp: data.timestamp?.toDate?.()?.toISOString() || new Date().toISOString(),
+          })
+        })
+
+        console.log(`Loaded ${globalThreads.length} global threads`)
+
+        // Combine with sample threads for variety
+        const allThreads = [...globalThreads, ...sampleThreads]
+        setThreads(allThreads.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()))
+      } catch (error) {
+        console.error("Error loading global threads:", error)
+        // Fallback to sample threads
+        setThreads(sampleThreads)
+      } finally {
+        setLoading(false)
+      }
     }
 
-    // Combine user threads with cool stories
-    const allThreads = [...coolStories, ...userThreads]
-    setThreads(allThreads.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()))
+    loadGlobalThreads()
   }, [user])
 
-  const postThread = () => {
-    if (newThread.trim() && user) {
-      const thread: Thread = {
-        id: Date.now(),
+  // Post thread globally to Firebase
+  const postThread = async () => {
+    if (!newThread.trim() || !user || posting) return
+
+    try {
+      setPosting(true)
+      console.log("Posting thread globally to Firebase...")
+
+      const threadData = {
+        userId: user.id,
+        username: user.username,
+        profilePic: user.profilePic,
+        text: newThread.trim(),
+        likes: 0,
+        reactions: { fire: 0, heart: 0, mind: 0 },
+        comments: 0,
+        timestamp: serverTimestamp(),
+        createdAt: new Date(),
+      }
+
+      // Add to Firebase
+      const docRef = await addDoc(collection(db, "threads"), threadData)
+      console.log("Thread posted globally with ID:", docRef.id)
+
+      // Add to local state immediately for instant feedback
+      const localThread: Thread = {
+        id: docRef.id,
         userId: user.id,
         username: user.username,
         profilePic: user.profilePic,
@@ -157,18 +171,17 @@ export default function AuraThreads({ user, setUser, onOpenDM }: AuraThreadsProp
         timestamp: new Date().toISOString(),
       }
 
-      // Add to local state
-      const updatedThreads = [thread, ...threads]
-      setThreads(updatedThreads)
-
-      // Save user threads separately
-      const savedThreads = localStorage.getItem("auraThreads")
-      const userThreads = savedThreads ? JSON.parse(savedThreads) : []
-      userThreads.unshift(thread)
-      localStorage.setItem("auraThreads", JSON.stringify(userThreads))
-
+      setThreads((prev) => [localThread, ...prev])
       setNewThread("")
       setShowNewThread(false)
+
+      // Show success message
+      console.log("Thread shared globally! Everyone can now see it.")
+    } catch (error) {
+      console.error("Error posting thread globally:", error)
+      alert("Failed to share thread globally. Please try again.")
+    } finally {
+      setPosting(false)
     }
   }
 
@@ -194,53 +207,55 @@ export default function AuraThreads({ user, setUser, onOpenDM }: AuraThreadsProp
     localStorage.setItem("auraUser", JSON.stringify(updatedUser))
   }
 
-  const likeThread = (threadId: number) => {
-    const updatedThreads = threads.map((thread) =>
-      thread.id === threadId ? { ...thread, likes: thread.likes + 1 } : thread,
-    )
-    setThreads(updatedThreads)
-
-    // Update user threads in storage
-    const savedThreads = localStorage.getItem("auraThreads")
-    if (savedThreads) {
-      const userThreads: Thread[] = JSON.parse(savedThreads)
-      const updatedUserThreads = userThreads.map((thread) =>
-        thread.id === threadId ? { ...thread, likes: thread.likes + 1 } : thread,
+  // Like thread globally
+  const likeThread = async (threadId: string | number) => {
+    try {
+      // Update local state immediately
+      setThreads((prev) =>
+        prev.map((thread) => (thread.id === threadId ? { ...thread, likes: thread.likes + 1 } : thread)),
       )
-      localStorage.setItem("auraThreads", JSON.stringify(updatedUserThreads))
+
+      // Update in Firebase if it's a Firebase document
+      if (typeof threadId === "string") {
+        const threadRef = doc(db, "threads", threadId)
+        await updateDoc(threadRef, {
+          likes: increment(1),
+        })
+        console.log("Thread like updated globally")
+      }
+    } catch (error) {
+      console.error("Error updating thread like:", error)
     }
   }
 
-  const reactToThread = (threadId: number, reactionType: keyof Thread["reactions"]) => {
-    const updatedThreads = threads.map((thread) =>
-      thread.id === threadId
-        ? {
-            ...thread,
-            reactions: {
-              ...thread.reactions,
-              [reactionType]: thread.reactions[reactionType] + 1,
-            },
-          }
-        : thread,
-    )
-    setThreads(updatedThreads)
-
-    // Update user threads in storage
-    const savedThreads = localStorage.getItem("auraThreads")
-    if (savedThreads) {
-      const userThreads: Thread[] = JSON.parse(savedThreads)
-      const updatedUserThreads = userThreads.map((thread) =>
-        thread.id === threadId
-          ? {
-              ...thread,
-              reactions: {
-                ...thread.reactions,
-                [reactionType]: thread.reactions[reactionType] + 1,
-              },
-            }
-          : thread,
+  // React to thread globally
+  const reactToThread = async (threadId: string | number, reactionType: keyof Thread["reactions"]) => {
+    try {
+      // Update local state immediately
+      setThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === threadId
+            ? {
+                ...thread,
+                reactions: {
+                  ...thread.reactions,
+                  [reactionType]: thread.reactions[reactionType] + 1,
+                },
+              }
+            : thread,
+        ),
       )
-      localStorage.setItem("auraThreads", JSON.stringify(updatedUserThreads))
+
+      // Update in Firebase if it's a Firebase document
+      if (typeof threadId === "string") {
+        const threadRef = doc(db, "threads", threadId)
+        await updateDoc(threadRef, {
+          [`reactions.${reactionType}`]: increment(1),
+        })
+        console.log(`Thread ${reactionType} reaction updated globally`)
+      }
+    } catch (error) {
+      console.error("Error updating thread reaction:", error)
     }
   }
 
@@ -261,8 +276,11 @@ export default function AuraThreads({ user, setUser, onOpenDM }: AuraThreadsProp
     <div className="pt-24 min-h-screen bg-gradient-to-br from-gray-900 via-black to-gray-900 p-6">
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-white mb-4 apple-font">All Stories</h1>
-          <p className="text-xl text-gray-400 font-medium">Share your experiences and read epic tales</p>
+          <h1 className="text-4xl font-bold text-white mb-4 apple-font">Global Threads</h1>
+          <p className="text-xl text-gray-400 font-medium">
+            Share your experiences with the world - {threads.length} global threads
+          </p>
+          {loading && <div className="text-sm text-blue-400 mt-2">Loading global threads...</div>}
         </div>
 
         {/* New Thread */}
@@ -278,7 +296,7 @@ export default function AuraThreads({ user, setUser, onOpenDM }: AuraThreadsProp
                   alt="Your avatar"
                   className="w-12 h-12 rounded-full object-cover"
                 />
-                <span className="text-gray-400 font-medium">Share your epic story...</span>
+                <span className="text-gray-400 font-medium">Share your epic story with the world...</span>
               </div>
             </button>
           ) : (
@@ -293,7 +311,7 @@ export default function AuraThreads({ user, setUser, onOpenDM }: AuraThreadsProp
                   <textarea
                     value={newThread}
                     onChange={(e) => setNewThread(e.target.value)}
-                    placeholder="What's your story? Share an experience, lesson, or moment that shaped you..."
+                    placeholder="What's your story? Share an experience, lesson, or moment that shaped you with everyone..."
                     className="w-full bg-gray-800 border border-gray-600 rounded-lg p-4 text-white placeholder-gray-400 resize-none h-32 focus:outline-none focus:border-blue-500 font-medium"
                     maxLength={280}
                   />
@@ -307,25 +325,27 @@ export default function AuraThreads({ user, setUser, onOpenDM }: AuraThreadsProp
                     setNewThread("")
                   }}
                   className="text-gray-400 hover:text-white transition-colors px-4 py-2 font-medium"
+                  disabled={posting}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={postThread}
-                  disabled={!newThread.trim()}
+                  disabled={!newThread.trim() || posting}
                   className="premium-gradient text-white font-bold px-6 py-2 rounded-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Share Story
+                  {posting ? "Sharing..." : "Share Globally"}
                 </button>
               </div>
             </div>
           )}
         </div>
 
-        {/* Stories Grid - 2x2 Layout */}
+        {/* Global Threads Grid - 2x2 Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {threads.map((thread) => {
             const isFollowing = user.following.includes(thread.userId)
+            const isFirebaseThread = typeof thread.id === "string"
 
             return (
               <div key={thread.id} className="glass-effect rounded-2xl p-6 hover-lift transition-all duration-300">
@@ -340,6 +360,11 @@ export default function AuraThreads({ user, setUser, onOpenDM }: AuraThreadsProp
                       <div className="flex items-center space-x-2">
                         <h3 className="font-bold text-white apple-font">{thread.username}</h3>
                         <span className="text-sm text-gray-500 font-medium">{formatTimeAgo(thread.timestamp)}</span>
+                        {isFirebaseThread && (
+                          <span className="bg-gradient-to-r from-green-400 to-blue-500 text-black px-2 py-1 rounded-full text-xs font-bold">
+                            🌍 GLOBAL
+                          </span>
+                        )}
                         {thread.id >= 8000 && thread.id < 9000 && (
                           <span className="bg-gradient-to-r from-yellow-400 to-red-500 text-black px-2 py-1 rounded-full text-xs font-bold">
                             🔥 EPIC
@@ -418,6 +443,14 @@ export default function AuraThreads({ user, setUser, onOpenDM }: AuraThreadsProp
             )
           })}
         </div>
+
+        {threads.length === 0 && !loading && (
+          <div className="text-center py-12">
+            <div className="text-6xl mb-4">🌍</div>
+            <h3 className="text-2xl font-bold text-white mb-2">No Global Threads Yet</h3>
+            <p className="text-gray-400">Be the first to share your story with the world!</p>
+          </div>
+        )}
       </div>
     </div>
   )
